@@ -44,7 +44,7 @@ func main() {
 			fmt.Fprintf(os.Stdout, "%s\n", strings.Join(rest, " "))
 		case "type":
 			switch rest[0] {
-			case "exit", "echo", "type", "pwd":
+			case "exit", "echo", "type", "pwd", "cd":
 				fmt.Fprintf(os.Stdout, "%s is a shell builtin\n", rest[0])
 			default:
 				PATH := os.Getenv("PATH")
@@ -83,6 +83,11 @@ func main() {
 				log.Fatal(err)
 			}
 			fmt.Println(dir)
+		case "cd":
+			if _, err := os.Stat(rest[0]); os.IsNotExist(err) {
+				fmt.Fprintf(os.Stdout, "cd: %s: No such file or directory\n", rest[0])
+			}
+			os.Chdir(rest[0])
 		default:
 			_, err := exec.LookPath(command)
 			if err != nil {
