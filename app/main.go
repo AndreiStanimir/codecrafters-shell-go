@@ -84,6 +84,9 @@ func main() {
 			}
 			fmt.Println(dir)
 		case "cd":
+			if rest[0] == "~" {
+				rest[0] = os.Getenv("HOME")
+			}
 			if _, err := os.Stat(rest[0]); os.IsNotExist(err) {
 				fmt.Fprintf(os.Stdout, "cd: %s: No such file or directory\n", rest[0])
 			}
