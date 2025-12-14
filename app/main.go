@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -76,6 +77,12 @@ func main() {
 					fmt.Fprintf(os.Stdout, "%s: not found\n", rest[0])
 				}
 			}
+		case "pwd":
+			dir, err := os.Getwd()
+			if err != nil {
+				log.Fatal(err)
+			}
+			fmt.Println(dir)
 		default:
 			_, err := exec.LookPath(command)
 			if err != nil {
