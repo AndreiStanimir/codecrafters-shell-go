@@ -133,6 +133,16 @@ func splitWithQuotes(s string) []string {
 		} else if s[i] == '\\' && inQuote && !inDoubleQuote {
 			current += string(s[i : i+2])
 			i++
+		} else if s[i] == '\\' && inDoubleQuote {
+			switch s[i+1] {
+			case '"', '\\':
+				current += string(s[i+1])
+				i++
+			default:
+				current += s[i : i+2]
+				i++
+			}
+			// default:
 		} else if s[i] == '"' {
 			inDoubleQuote = !inDoubleQuote
 		} else if s[i] == '\'' {
