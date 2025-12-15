@@ -258,7 +258,12 @@ func main() {
 
 		// --- redirection parsing ---
 		redirectFile := ""
+		redirectErr := false
 		if i := strings.LastIndex(line, "1>"); i != -1 {
+			redirectFile = strings.TrimSpace(line[i+2:])
+			line = strings.TrimSpace(line[:i])
+		} else if i := strings.LastIndex(line, "2>"); i != -1 {
+			redirectErr = true
 			redirectFile = strings.TrimSpace(line[i+2:])
 			line = strings.TrimSpace(line[:i])
 		} else if i := strings.LastIndex(line, ">"); i != -1 {
@@ -268,6 +273,7 @@ func main() {
 
 		// --- stdout selection ---
 		out := io.Writer(os.Stdout)
+		outErr := io.Writer(os.Stderr)
 		var outfile *os.File
 		if redirectFile != "" {
 			f, err := os.Create(redirectFile)
@@ -276,7 +282,11 @@ func main() {
 				continue
 			}
 			outfile = f
-			out = f
+			if redirectErr {
+				outErr = outfile
+			} else {
+				out = outfile
+			}
 		}
 
 		words := splitWithQuotes(line)
@@ -287,14 +297,12 @@ func main() {
 		if fn, ok := commands[cmd]; ok {
 			fn(args, out)
 		} else {
-			// --- external ---
-			_, err := exec.LookPath(cmd)
-			if err != nil {
+			if _, err := exec.LookPath(cmd); err != nil {
 				fmt.Fprintf(out, "%s: command not found\n", cmd)
 			} else {
-				c := exec.Command(cmd, args...) // ← IMPORTANT
+				c := exec.Command(cmd, args...)
 				c.Stdout = out
-				c.Stderr = os.Stderr
+				c.Stderr = outErr
 				c.Stdin = os.Stdin
 				_ = c.Run()
 			}
