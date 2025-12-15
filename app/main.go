@@ -125,12 +125,18 @@ func splitWithQuotes(s string) []string {
 	var result []string
 	var current string
 	inQuote := false
-
+	inDoubleQuote := false
 	for i := 0; i < len(s); i++ {
-		if s[i] == '\'' {
-			inQuote = !inQuote
+		if s[i] == '"' {
+			inDoubleQuote = !inDoubleQuote
+		} else if s[i] == '\'' {
+			if !inDoubleQuote {
+				inQuote = !inQuote
+			} else {
+				current += string(s[i])
+			}
 			// current += string(s[i])
-		} else if s[i] == ' ' && !inQuote {
+		} else if s[i] == ' ' && (!inQuote && !inDoubleQuote) {
 			if current != "" {
 				result = append(result, current)
 				current = ""
