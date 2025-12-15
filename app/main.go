@@ -259,13 +259,24 @@ func main() {
 		// --- redirection parsing ---
 		redirectFile := ""
 		redirectErr := false
-		if i := strings.LastIndex(line, "1>"); i != -1 {
+		appendFile := false
+		if i := strings.LastIndex(line, "1>>"); i != -1 {
+			appendFile = true
+			redirectFile = strings.TrimSpace(line[i+3:])
+			line = strings.TrimSpace(line[:i])
+		} else if i := strings.LastIndex(line, "1>"); i != -1 {
+
 			redirectFile = strings.TrimSpace(line[i+2:])
 			line = strings.TrimSpace(line[:i])
 		} else if i := strings.LastIndex(line, "2>"); i != -1 {
 			redirectErr = true
 			redirectFile = strings.TrimSpace(line[i+2:])
 			line = strings.TrimSpace(line[:i])
+		} else if i := strings.LastIndex(line, ">>"); i != -1 {
+			appendFile = true
+			redirectFile = strings.TrimSpace(line[i+2:])
+			line = strings.TrimSpace(line[:i])
+
 		} else if i := strings.LastIndex(line, ">"); i != -1 {
 			redirectFile = strings.TrimSpace(line[i+1:])
 			line = strings.TrimSpace(line[:i])
@@ -276,12 +287,21 @@ func main() {
 		outErr := io.Writer(os.Stderr)
 		var outfile *os.File
 		if redirectFile != "" {
-			f, err := os.Create(redirectFile)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				continue
+			if appendFile {
+				f, err := os.OpenFile(redirectFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					continue
+				}
+				outfile = f
+			} else {
+				f, err := os.Create(redirectFile)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					continue
+				}
+				outfile = f
 			}
-			outfile = f
 			if redirectErr {
 				outErr = outfile
 			} else {
