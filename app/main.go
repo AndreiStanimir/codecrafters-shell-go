@@ -144,7 +144,12 @@ func splitWithQuotes(s string) []string {
 			}
 			// default:
 		} else if s[i] == '"' {
-			inDoubleQuote = !inDoubleQuote
+			if inQuote {
+				// literal double quote inside single quotes
+				current += `"`
+			} else {
+				inDoubleQuote = !inDoubleQuote
+			}
 		} else if s[i] == '\'' {
 			if !inDoubleQuote {
 				inQuote = !inQuote
@@ -179,6 +184,7 @@ func main() {
 		words := splitWithQuotes(inputTrimmed)
 		command := words[0]
 
+		// fmt.Fprintf(os.Stdout,"command::::*%s",command) )
 		wordsChan := make(chan Word)
 		go func() {
 			SanitizeSingleQotesChannel(inputTrimmed[len(command):], wordsChan)
@@ -243,6 +249,7 @@ func main() {
 				continue
 			}
 			cmd := exec.Command(command, rest...)
+
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			cmd.Stdin = os.Stdin
