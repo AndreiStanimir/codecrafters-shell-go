@@ -265,8 +265,12 @@ func main() {
 			redirectFile = strings.TrimSpace(line[i+3:])
 			line = strings.TrimSpace(line[:i])
 		} else if i := strings.LastIndex(line, "1>"); i != -1 {
-
 			redirectFile = strings.TrimSpace(line[i+2:])
+			line = strings.TrimSpace(line[:i])
+		} else if i := strings.LastIndex(line, "2>>"); i != -1 {
+			redirectErr = true
+			appendFile = true
+			redirectFile = strings.TrimSpace(line[i+3:])
 			line = strings.TrimSpace(line[:i])
 		} else if i := strings.LastIndex(line, "2>"); i != -1 {
 			redirectErr = true
