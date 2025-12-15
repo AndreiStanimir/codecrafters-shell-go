@@ -3,7 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"log"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -173,88 +173,135 @@ func splitWithQuotes(s string) []string {
 }
 
 func main() {
+	commands := map[string]func([]string, io.Writer) bool{
+		"exit": func(_ []string, _ io.Writer) bool {
+			os.Exit(0)
+			return true
+		},
+
+		"echo": func(args []string, out io.Writer) bool {
+			fmt.Fprintln(out, strings.Join(args, " "))
+			return true
+		},
+
+		"pwd": func(_ []string, out io.Writer) bool {
+			dir, err := os.Getwd()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return true
+			}
+			fmt.Fprintln(out, dir)
+			return true
+		},
+
+		"cd": func(args []string, _ io.Writer) bool {
+			if len(args) == 0 {
+				return true
+			}
+			path := args[0]
+			if path == "~" {
+				path = os.Getenv("HOME")
+			}
+			if err := os.Chdir(path); err != nil {
+				fmt.Fprintf(os.Stdout, "cd: %s: No such file or directory\n", path)
+			}
+			return true
+		},
+
+		"type": func(args []string, out io.Writer) bool {
+			if len(args) == 0 {
+				return true
+			}
+			builtins := map[string]bool{
+				"exit": true, "echo": true, "type": true, "pwd": true, "cd": true,
+			}
+			if builtins[args[0]] {
+				fmt.Fprintf(out, "%s is a shell builtin\n", args[0])
+				return true
+			}
+
+			PATH := os.Getenv("PATH")
+			for _, p := range strings.Split(PATH, ":") {
+				entries, err := os.ReadDir(p)
+				if err != nil {
+					continue
+				}
+				for _, e := range entries {
+					if e.Name() == args[0] {
+						info, _ := e.Info()
+						if IsExecAny(info.Mode()) {
+							fmt.Fprintf(out, "%s is %s\n", args[0], filepath.Join(p, args[0]))
+							return true
+						}
+					}
+				}
+			}
+			fmt.Fprintf(out, "%s: not found\n", args[0])
+			return true
+		},
+	}
+
+	reader := bufio.NewReader(os.Stdin)
+
 	for {
-		_, err := fmt.Fprint(os.Stdout, "$ ")
+		fmt.Fprint(os.Stdout, "$ ")
+
+		line, err := reader.ReadString('\n')
 		if err != nil {
 			return
 		}
-		inputOriginal, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-		input := strings.ReplaceAll(inputOriginal, "''", "")
-		inputTrimmed := strings.TrimSpace(input)
-		words := splitWithQuotes(inputTrimmed)
-		command := words[0]
 
-		// fmt.Fprintf(os.Stdout,"command::::*%s",command) )
-		wordsChan := make(chan Word)
-		go func() {
-			SanitizeSingleQotesChannel(inputTrimmed[len(command):], wordsChan)
-			close(wordsChan)
-		}()
-		rest := words[1:]
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
 
-		switch command {
-		case "exit":
-			return
-		case "echo":
-			result := strings.Join(rest, " ")
-			fmt.Fprintf(os.Stdout, "%s\n", result)
-		case "type":
-			switch rest[0] {
-			case "exit", "echo", "type", "pwd", "cd":
-				fmt.Fprintf(os.Stdout, "%s is a shell builtin\n", rest[0])
-			default:
-				PATH := os.Getenv("PATH")
-				found := false
-				for path := range strings.SplitSeq(PATH, ":") {
-					files, err := os.ReadDir(path)
-					if err != nil {
-						continue
-					}
-					for _, f := range files {
-						if !f.IsDir() && f.Name() == rest[0] {
-							info, _ := f.Info()
-							if IsExecAny(info.Mode()) {
-								fmt.Fprintf(os.Stdout, "%s is %s\n", rest[0], filepath.Join(path, rest[0]))
-								found = true
-								break
-							}
-						}
-					}
-					if found {
-						break
-					}
-				}
-				if !found {
-					fmt.Fprintf(os.Stdout, "%s: not found\n", rest[0])
-				}
-			}
-		case "pwd":
-			dir, err := os.Getwd()
+		// --- redirection parsing ---
+		redirectFile := ""
+		if i := strings.LastIndex(line, "1>"); i != -1 {
+			redirectFile = strings.TrimSpace(line[i+2:])
+			line = strings.TrimSpace(line[:i])
+		} else if i := strings.LastIndex(line, ">"); i != -1 {
+			redirectFile = strings.TrimSpace(line[i+1:])
+			line = strings.TrimSpace(line[:i])
+		}
+
+		// --- stdout selection ---
+		out := io.Writer(os.Stdout)
+		var outfile *os.File
+		if redirectFile != "" {
+			f, err := os.Create(redirectFile)
 			if err != nil {
-				log.Fatal(err)
-			}
-			fmt.Println(dir)
-		case "cd":
-			if rest[0] == "~" {
-				rest[0] = os.Getenv("HOME")
-			}
-			if _, err := os.Stat(rest[0]); os.IsNotExist(err) {
-				fmt.Fprintf(os.Stdout, "cd: %s: No such file or directory\n", rest[0])
-			}
-			os.Chdir(rest[0])
-		default:
-			_, err := exec.LookPath(command)
-			if err != nil {
-				fmt.Fprintf(os.Stdout, "%s: command not found\n", command)
+				fmt.Fprintln(os.Stderr, err)
 				continue
 			}
-			cmd := exec.Command(command, rest...)
+			outfile = f
+			out = f
+		}
 
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			cmd.Stdin = os.Stdin
+		words := splitWithQuotes(line)
+		cmd := words[0]
+		args := words[1:]
 
-			_ = cmd.Run()
+		// --- builtin ---
+		if fn, ok := commands[cmd]; ok {
+			fn(args, out)
+		} else {
+			// --- external ---
+			_, err := exec.LookPath(cmd)
+			if err != nil {
+				fmt.Fprintf(out, "%s: command not found\n", cmd)
+			} else {
+				c := exec.Command(cmd, args...) // ← IMPORTANT
+				c.Stdout = out
+				c.Stderr = os.Stderr
+				c.Stdin = os.Stdin
+				_ = c.Run()
+			}
+		}
+
+		if outfile != nil {
+			outfile.Close()
 		}
 	}
 }
