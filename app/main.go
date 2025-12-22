@@ -197,6 +197,11 @@ func findExecutableWithUnescape(name string) (exePath string, argv0 string, err 
 	return "", "", fmt.Errorf("not found")
 }
 
+func notFound(string) []string {
+	fmt.Print("\x07")
+	return make([]string, 0)
+}
+
 func main() {
 	rl, _ := readline.NewEx(&readline.Config{
 		Prompt: "$ ",
@@ -206,6 +211,7 @@ func main() {
 			readline.PcItem("cd"),
 			readline.PcItem("pwd"),
 			readline.PcItem("type"),
+			readline.PcItemDynamic(notFound),
 		),
 	})
 
