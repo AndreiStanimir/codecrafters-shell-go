@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/chzyer/readline"
@@ -33,68 +34,24 @@ type Word struct {
 	typee WordType
 }
 
-//func SanitizeSingleQotesChannel(input string, wordsChan chan Word) {
-//	if !strings.Contains(input, "'") {
-//		for _, word := range strings.Split(standardizeSpaces(input), " ") {
-//			if word != "" {
-//				wordsChan <- Word{text: word, typee: Normal}
-//			}
-//		}
-//		return
-//	}
-//
-//	outside := true
-//	for len(input) > 0 {
-//		i := strings.Index(input, "'")
-//		if i == -1 {
-//			if outside && strings.TrimSpace(input) != "" {
-//				wordsChan <- Word{text: input, typee: Normal}
-//			}
-//			return
-//		}
-//
-//		if i > 0 && outside {
-//			wordsChan <- Word{text: input[:i], typee: Normal}
-//		}
-//
-//		j := strings.Index(input[i+1:], "'")
-//		if j == -1 {
-//			return
-//		}
-//
-//		wordsChan <- Word{
-//			text:  input[i+1 : i+1+j],
-//			typee: SingleQuote,
-//		}
-//
-//		outside = !outside
-//		input = input[i+1+j+1:]
-//	}
-//}
-
 func splitWithQuotes(s string) []string {
 	var res []string
 	var cur string
 	inSQ, inDQ := false, false
-
 	for i := 0; i < len(s); i++ {
 		switch s[i] {
 		case '\'':
 			if !inDQ {
 				inSQ = !inSQ
 			} else {
-				// single quote inside double quotes is literal
 				cur += "'"
 			}
-
 		case '"':
 			if !inSQ {
 				inDQ = !inDQ
 			} else {
-				// double quote inside single quotes is literal
-				cur += `"`
+				cur += "\""
 			}
-
 		case ' ':
 			if !inSQ && !inDQ {
 				if cur != "" {
@@ -105,30 +62,21 @@ func splitWithQuotes(s string) []string {
 				cur += " "
 			}
 		case '\\':
-			// Improved escaping rules:
-			// - inside single quotes -> backslash is literal
-			// - inside double quotes -> backslash only escapes: " $ ` \ and newline
-			// - outside quotes -> backslash escapes next char (append next char)
 			if inSQ {
-				// literal backslash inside single quotes
 				cur += "\\"
 			} else if inDQ {
 				if i+1 < len(s) {
 					next := s[i+1]
-					// In double quotes, backslash only escapes these specific characters
 					if next == '"' || next == '$' || next == '`' || next == '\\' || next == '\n' {
 						cur += string(next)
 						i++
 					} else {
-						// For other characters, backslash is literal
 						cur += "\\"
 					}
 				} else {
-					// trailing backslash — keep it
 					cur += "\\"
 				}
 			} else {
-				// outside quotes: escape next char
 				if i+1 < len(s) {
 					cur += string(s[i+1])
 					i++
@@ -138,7 +86,6 @@ func splitWithQuotes(s string) []string {
 			cur += string(s[i])
 		}
 	}
-
 	if cur != "" {
 		res = append(res, cur)
 	}
@@ -146,18 +93,15 @@ func splitWithQuotes(s string) []string {
 }
 
 func findExecutableWithUnescape(name string) (exePath string, argv0 string, err error) {
-	// Try as-is first
 	if p, e := exec.LookPath(name); e == nil {
 		return p, name, nil
 	}
 
-	// Try unescaped variants (common cases from tests)
 	tryVariants := []string{
-		strings.ReplaceAll(name, `\'`, `'`),
-		strings.ReplaceAll(name, `\"`, `"`),
-		strings.ReplaceAll(name, `\\`, `\`),
+		strings.ReplaceAll(name, "\\'", "'"),
+		strings.ReplaceAll(name, "\\\"", "\""),
+		strings.ReplaceAll(name, "\\\\", "\\"),
 	}
-
 	seen := map[string]bool{}
 	for _, v := range tryVariants {
 		if v == "" || seen[v] {
@@ -169,7 +113,6 @@ func findExecutableWithUnescape(name string) (exePath string, argv0 string, err 
 		}
 	}
 
-	// As a last resort, search PATH entries for a name match (literal comparison).
 	for _, d := range strings.Split(os.Getenv("PATH"), ":") {
 		if d == "" {
 			continue
@@ -182,7 +125,6 @@ func findExecutableWithUnescape(name string) (exePath string, argv0 string, err 
 					return p, name, nil
 				}
 			}
-			// also try unescaped forms
 			for _, v := range tryVariants {
 				if en.Name() == v {
 					p := filepath.Join(d, en.Name())
@@ -193,13 +135,7 @@ func findExecutableWithUnescape(name string) (exePath string, argv0 string, err 
 			}
 		}
 	}
-
 	return "", "", fmt.Errorf("not found")
-}
-
-func notFound(string) []string {
-	fmt.Print("\x07")
-	return make([]string, 0)
 }
 
 func getExecutablesInPath() []string {
@@ -207,27 +143,21 @@ func getExecutablesInPath() []string {
 	if !ok {
 		return nil
 	}
-
 	var executables []string
 	seen := make(map[string]bool)
-
 	for _, dir := range strings.Split(pathEnv, ":") {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
 		}
-
 		for _, entry := range entries {
 			if entry.IsDir() {
 				continue
 			}
-
 			info, err := entry.Info()
 			if err != nil {
 				continue
 			}
-
-			// check executable bit
 			if info.Mode()&0o111 != 0 {
 				name := entry.Name()
 				if !seen[name] {
@@ -237,45 +167,92 @@ func getExecutablesInPath() []string {
 			}
 		}
 	}
-
+	sort.Strings(executables)
 	return executables
 }
 
-func getPrefixExecutable(prefix string, paths []string) string {
-	for _, p := range paths {
-		if strings.HasPrefix(p, prefix) {
-			return p
-		}
-	}
-	return ""
-}
-
 func main() {
-	completer2 := readline.NewPrefixCompleter(
+	var lastPrefix string
+	var tabCount int
+	var rlInstance *readline.Instance
+
+	completer := readline.NewPrefixCompleter(
 		readline.PcItem("echo"),
 		readline.PcItem("exit"),
 		readline.PcItem("cd"),
 		readline.PcItem("pwd"),
 		readline.PcItem("type"),
-		readline.PcItemDynamic(notFound),
+		readline.PcItemDynamic(func(input string) []string {
+			// Get the current prefix (last word being typed)
+			prefix := input
+			if idx := strings.LastIndex(input, " "); idx != -1 {
+				prefix = input[idx+1:]
+			}
+
+			// If prefix changed, reset tab count
+			if prefix != lastPrefix {
+				lastPrefix = prefix
+				tabCount = 0
+			}
+
+			tabCount++
+
+			// Get all executables and filter by prefix
+			allExecs := getExecutablesInPath()
+			var matches []string
+			for _, exec := range allExecs {
+				if strings.HasPrefix(exec, prefix) {
+					matches = append(matches, exec)
+				}
+			}
+			if len(matches) == 1 {
+				return matches[:]
+			}
+
+			// First tab: ring bell, return nothing
+			if tabCount == 1 {
+				fmt.Print("\x07")
+				return []string{}
+			}
+
+			// Second tab: print matches with two spaces, then refresh prompt
+			if tabCount >= 2 {
+				tabCount = 0 // Reset for next cycle
+				if len(matches) > 0 {
+					fmt.Println()
+					fmt.Println(strings.Join(matches, "  "))
+					if rlInstance != nil {
+						rlInstance.Refresh()
+					}
+				}
+				return []string{}
+			}
+
+			return []string{}
+		}),
 	)
+
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:       "$ ",
+		AutoComplete: completer,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rl.Close()
+
+	// Store reference for completer to use
+	rlInstance = rl
+
 	for {
-		completer := completer2
-		item := readline.PcItemDynamic(func(input string) []string {
-			dynamicExecutables := getExecutablesInPath()
-			return dynamicExecutables
-		})
-		completer2.Children = append(completer2.Children, item)
-
-		rl, _ := readline.NewEx(&readline.Config{
-			Prompt:       "$ ",
-			AutoComplete: completer,
-		})
-
 		line, err := rl.Readline()
 		if err != nil {
 			return
 		}
+
+		// Reset tab state after each command
+		lastPrefix = ""
+		tabCount = 0
 
 		input := strings.TrimSpace(strings.ReplaceAll(line, "''", ""))
 		if input == "" {
@@ -287,7 +264,6 @@ func main() {
 		redirectStdErr := false
 		appendMode := false
 
-		// Check longer tokens first so we remove the correct characters from input.
 		if i := strings.LastIndex(input, "2>>"); i != -1 {
 			redirectStdErr = true
 			appendMode = true
@@ -317,6 +293,7 @@ func main() {
 		if len(words) == 0 {
 			continue
 		}
+
 		cmd := words[0]
 		args := []string{}
 		if len(words) > 1 {
@@ -333,7 +310,6 @@ func main() {
 			if appendMode {
 				f, ferr = os.OpenFile(redirectFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 			} else {
-				// overwrite/truncate
 				f, ferr = os.Create(redirectFile)
 			}
 			if ferr != nil {
@@ -355,17 +331,14 @@ func main() {
 				outfile.Close()
 			}
 			return
-
 		case "echo":
 			fmt.Fprintln(out, strings.Join(args, " "))
-
 		case "pwd":
 			dir, err := os.Getwd()
 			if err != nil {
 				log.Fatal(err)
 			}
 			fmt.Fprintln(out, dir)
-
 		case "cd":
 			path := ""
 			if len(args) > 0 {
@@ -377,19 +350,21 @@ func main() {
 			if err := os.Chdir(path); err != nil {
 				fmt.Fprintf(out, "cd: %s: No such file or directory\n", path)
 			}
-
 		case "type":
 			if len(args) == 0 {
 				break
 			}
 			builtins := map[string]bool{
-				"exit": true, "echo": true, "cd": true, "pwd": true, "type": true,
+				"exit": true,
+				"echo": true,
+				"cd":   true,
+				"pwd":  true,
+				"type": true,
 			}
 			if builtins[args[0]] {
 				fmt.Fprintf(out, "%s is a shell builtin\n", args[0])
 				break
 			}
-
 			found := false
 			for _, p := range strings.Split(os.Getenv("PATH"), ":") {
 				entries, _ := os.ReadDir(p)
@@ -420,10 +395,8 @@ func main() {
 			}
 
 			var c *exec.Cmd
-			// If exePath matches the original command name (no special path), just use cmd
 			if exePath != "" && exePath != cmd {
 				c = exec.Command(exePath, args...)
-				// ensure the executed program sees the "unescaped" name as argv[0]
 				c.Args[0] = argv0
 			} else {
 				c = exec.Command(cmd, args...)
